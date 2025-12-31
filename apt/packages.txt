@@ -1,0 +1,15 @@
+nmap
+masscan
+ffuf
+gobuster
+dirsearch
+hydra
+john
+hashcat
+netcat-traditional
+tcpdump
+whois
+dnsutils
+python3-pip
+python3-venv
+
