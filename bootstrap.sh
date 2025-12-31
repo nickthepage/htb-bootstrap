@@ -1,128 +1,82 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-echo "[*] HTB Bootstrap starting..."
+### VARIABLES ###
+REPO_URL="git@github.com:nickthepage/htb-bootstrap.git"
+INSTALL_DIR="$HOME/htb-bootstrap"
+USER_NAME="$(whoami)"
 
-# -------------------------
-# Variables
-# -------------------------
-USER_HOME="$HOME"
-REPO_DIR="$HOME/htb-bootstrap"
+### ENSURE NON-INTERACTIVE ###
+export DEBIAN_FRONTEND=noninteractive
 
-# -------------------------
-# Sanity checks
-# -------------------------
-if [[ "$EUID" -eq 0 ]]; then
-  echo "[!] Do NOT run this script as root."
-  exit 1
-fi
-
-if [[ ! -d "$REPO_DIR" ]]; then
-  echo "[!] Repo not found at $REPO_DIR"
-  echo "    Clone it first:"
-  echo "    git clone https://github.com/nickthepage/htb-bootstrap.git"
-  exit 1
-fi
-
-# -------------------------
-# System update
-# -------------------------
-echo "[*] Updating system..."
+echo "[+] Updating system"
 sudo apt update -y
 sudo apt full-upgrade -y
-sudo apt autoremove -y
-sudo apt autoclean -y
+sudo apt install -y git curl vim tmux zsh qrencode fail2ban \
+                    libpam-google-authenticator python3-pip
 
-# -------------------------
-# Install base packages
-# -------------------------
-echo "[*] Installing base packages..."
-
-BASE_PACKAGES=(
-  git
-  curl
-  wget
-  vim
-  tmux
-  zsh
-  unzip
-  htop
-  net-tools
-  build-essential
-  ca-certificates
-  gnupg
-)
-echo "[*] Installing HTB tools..."
-xargs -a "$REPO_DIR/apt/packages.txt" sudo apt install -y
-
-
-sudo apt install -y "${BASE_PACKAGES[@]}"
-
-# -------------------------
-# Install Oh My Zsh
-# -------------------------
-if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
-  echo "[*] Installing Oh My Zsh..."
-  RUNZSH=no CHSH=no sh -c \
-    "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+### CLONE REPO ###
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo "[+] Cloning bootstrap repository"
+    git clone "$REPO_URL" "$INSTALL_DIR"
 else
-  echo "[*] Oh My Zsh already installed."
+    echo "[+] Repo already exists, pulling updates"
+    git -C "$INSTALL_DIR" pull
 fi
 
-# -------------------------
-# Zsh plugins
-# -------------------------
-ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+cd "$INSTALL_DIR"
 
-echo "[*] Installing Zsh plugins..."
-
-if [[ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]]; then
-  git clone https://github.com/zsh-users/zsh-autosuggestions \
-    "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+### INSTALL APT PACKAGES ###
+if [ -f apt/packages.txt ]; then
+    echo "[+] Installing apt packages"
+    sudo apt install -y $(grep -vE '^#|^$' apt/packages.txt)
 fi
 
-if [[ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]]; then
-  git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
-    "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+### SSH HARDENING ###
+echo "[+] Hardening SSH"
+sudo cp ssh/sshd_config.hardened /etc/ssh/sshd_config
+sudo systemctl restart ssh
+
+### FAIL2BAN ###
+echo "[+] Enabling Fail2Ban"
+sudo systemctl enable --now fail2ban
+
+### GOOGLE AUTHENTICATOR (NON-INTERACTIVE) ###
+if [ ! -f "$HOME/.google_authenticator" ]; then
+    echo "[+] Setting up Google Authenticator"
+    google-authenticator -t -d -f -r 3 -R 30 -W
 fi
 
-# -------------------------
-# Powerlevel10k
-# -------------------------
-if [[ ! -d "$HOME/powerlevel10k" ]]; then
-  echo "[*] Installing Powerlevel10k..."
-  git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$HOME/powerlevel10k"
+### ZSH + OH-MY-ZSH ###
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+    echo "[+] Installing Oh My Zsh"
+    RUNZSH=no CHSH=no sh -c \
+      "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
 fi
 
-# -------------------------
-# Apply dotfiles
-# -------------------------
-echo "[*] Applying dotfiles..."
+ln -sf "$INSTALL_DIR/zsh/.zshrc" "$HOME/.zshrc"
+ln -sf "$INSTALL_DIR/zsh/p10k.zsh" "$HOME/.p10k.zsh"
 
-if [[ -f "$REPO_DIR/zsh/.zshrc" ]]; then
-  ln -sf "$REPO_DIR/zsh/.zshrc" "$HOME/.zshrc"
+### SET DEFAULT SHELL ###
+if [ "$SHELL" != "$(which zsh)" ]; then
+    sudo chsh -s "$(which zsh)" "$USER_NAME"
 fi
 
-if [[ -f "$REPO_DIR/tmux/.tmux.conf" ]]; then
-  ln -sf "$REPO_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
+### TMUX + TPM ###
+mkdir -p "$HOME/.tmux/plugins"
+
+if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
+    echo "[+] Installing TPM"
+    git clone https://github.com/tmux-plugins/tpm \
+        "$HOME/.tmux/plugins/tpm"
 fi
 
-# -------------------------
-# tmux plugin manager
-# -------------------------
-if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
-  echo "[*] Installing tmux plugin manager..."
-  git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
-fi
+ln -sf "$INSTALL_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
 
-# -------------------------
-# Default shell
-# -------------------------
-if [[ "$SHELL" != */zsh ]]; then
-  echo "[*] Changing default shell to zsh..."
-  chsh -s "$(which zsh)"
-fi
+### INSTALL TMUX PLUGINS (NO PREFIX) ###
+"$HOME/.tmux/plugins/tpm/bin/install_plugins"
 
-echo "[✓] Bootstrap complete."
-echo "    Restart your terminal or run: exec zsh"
+echo
+echo "[✔] Bootstrap complete"
+echo "[!] Reboot recommended"
 
